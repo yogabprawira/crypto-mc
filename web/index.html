@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Most Liquid Crypto Assets · 24h Volume</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #131722;
+    --panel-2: #1a1f2e;
+    --border: #232838;
+    --text: #e6e9ef;
+    --muted: #8b93a7;
+    --accent: #4c8dff;
+    --up: #26a69a;
+    --down: #ef5350;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9; --panel: #fff; --panel-2: #f0f2f6; --border: #e2e5ec;
+      --text: #14171f; --muted: #6b7280; --accent: #2563eb;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px 64px; }
+  header { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .sub a { color: var(--accent); text-decoration: none; }
+  .actions { display: flex; gap: 10px; align-items: center; }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.1); }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 20px 0; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .stat .v { font-size: 18px; font-weight: 650; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  #search {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 9px 12px; font-size: 14px; width: 190px;
+  }
+  .tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; min-width: 900px; }
+  th, td { padding: 11px 14px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  th {
+    position: sticky; top: 0; background: var(--panel-2); color: var(--muted);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600;
+    border-bottom: 1px solid var(--border); cursor: pointer; user-select: none;
+  }
+  th:hover { color: var(--text); }
+  th.num-asc::after { content: " ▲"; color: var(--accent); }
+  th.num-desc::after { content: " ▼"; color: var(--accent); }
+  td { border-bottom: 1px solid var(--border); }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--panel-2); }
+  .l { text-align: left; }
+  .rank { color: var(--muted); width: 52px; }
+  .name a { color: var(--text); text-decoration: none; font-weight: 600; }
+  .name a:hover { color: var(--accent); }
+  .sym { color: var(--muted); font-size: 12px; margin-left: 7px; }
+  .up { color: var(--up); }
+  .down { color: var(--down); }
+  .bar { height: 4px; border-radius: 2px; background: var(--accent); opacity: .55; margin-top: 5px; }
+  .banner { border-radius: 10px; padding: 11px 14px; margin: 16px 0; font-size: 13px; }
+  .banner.err { background: rgba(239,83,80,.12); border: 1px solid rgba(239,83,80,.4); color: var(--down); }
+  .empty { padding: 44px; text-align: center; color: var(--muted); }
+  .spin { display: inline-block; width: 13px; height: 13px; margin-right: 7px; vertical-align: -2px;
+    border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: r .7s linear infinite; }
+  @keyframes r { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Most Liquid Crypto Assets</h1>
+      <div class="sub">
+        Ranked by 24h trading volume · stablecoins excluded · scraped from
+        <a href="https://coinmarketcap.com/all/views/all/" target="_blank" rel="noopener">coinmarketcap.com</a>
+      </div>
+    </div>
+    <div class="actions">
+      <input id="search" type="search" placeholder="Filter name / symbol…" autocomplete="off" />
+      <button id="refresh">Crawl again</button>
+    </div>
+  </header>
+
+  <div class="stats">
+    <div class="stat"><div class="k">Assets</div><div class="v" id="s-count">—</div></div>
+    <div class="stat"><div class="k">Total 24h volume</div><div class="v" id="s-vol">—</div></div>
+    <div class="stat"><div class="k">Stablecoins excluded</div><div class="v" id="s-stable">—</div></div>
+    <div class="stat"><div class="k">Derivatives excluded</div><div class="v" id="s-deriv">—</div></div>
+    <div class="stat"><div class="k">Tokenized RWAs excluded</div><div class="v" id="s-tok">—</div></div>
+    <div class="stat"><div class="k">Last crawl</div><div class="v" id="s-when">—</div></div>
+    <div class="stat"><div class="k">Next scheduled</div><div class="v" id="s-next">—</div></div>
+    <div class="stat"><div class="k">Source</div><div class="v" id="s-src" style="font-size:13px">—</div></div>
+  </div>
+
+  <div id="banner"></div>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="l" data-k="rank">#</th>
+          <th class="l" data-k="name">Name</th>
+          <th data-k="price">Price</th>
+          <th data-k="marketCap">Market Cap</th>
+          <th data-k="volume24h" class="num-desc">Volume (24h)</th>
+          <th class="l" data-k="circulatingSupply">Circulating Supply</th>
+          <th data-k="change1h">1h %</th>
+          <th data-k="change24h">24h %</th>
+          <th data-k="change7d">7d %</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="empty" class="empty">Loading…</div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let snap = { assets: [] };
+let sortKey = "volume24h", sortDir = -1;
+let intervalSec = 0, nextRun = null, busy = false;
+
+const usd = (n) => {
+  if (!n) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e12) return "$" + (n / 1e12).toFixed(2) + "T";
+  if (a >= 1e9)  return "$" + (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6)  return "$" + (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e3)  return "$" + (n / 1e3).toFixed(2) + "K";
+  return "$" + n.toFixed(2);
+};
+const pct = (n) => {
+  const cls = n > 0 ? "up" : n < 0 ? "down" : "";
+  return `<span class="${cls}">${n > 0 ? "+" : ""}${n.toFixed(2)}%</span>`;
+};
+// Coin names come from a public listing where anyone can submit a token, so
+// treat every scraped string as untrusted before it reaches innerHTML.
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+));
+// Only allow the coinmarketcap links we expect; anything else loses its href.
+const safeURL = (u) => /^https:\/\/coinmarketcap\.com\//.test(u || "") ? esc(u) : "";
+
+const ago = (iso) => {
+  const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  return Math.floor(s / 3600) + "h ago";
+};
+
+function render() {
+  const q = $("search").value.trim().toLowerCase();
+  let list = snap.assets || [];
+  if (q) list = list.filter(a => a.name.toLowerCase().includes(q) || a.symbol.toLowerCase().includes(q));
+
+  list = [...list].sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (typeof x === "string") return sortDir * x.localeCompare(y);
+    return sortDir * (x - y);
+  });
+
+  const max = Math.max(...list.map(a => a.volume24h), 1);
+  $("rows").innerHTML = list.map(a => `
+    <tr>
+      <td class="l rank">${a.rank}</td>
+      <td class="l name"><a href="${safeURL(a.url)}" target="_blank" rel="noopener">${esc(a.name)}</a><span class="sym">${esc(a.symbol)}</span></td>
+      <td>${esc(a.priceText) || usd(a.price)}</td>
+      <td>${usd(a.marketCap)}</td>
+      <td>${usd(a.volume24h)}<div class="bar" style="width:${(a.volume24h / max * 100).toFixed(1)}%"></div></td>
+      <td class="l">${esc(a.circulatingSupply) || "—"}</td>
+      <td>${pct(a.change1h)}</td>
+      <td>${pct(a.change24h)}</td>
+      <td>${pct(a.change7d)}</td>
+    </tr>`).join("");
+
+  $("empty").style.display = list.length ? "none" : "block";
+  if (!list.length) $("empty").textContent = snap.assets?.length ? "No match." : "No data yet — hit “Crawl again”.";
+
+  $("s-count").textContent  = (snap.assets || []).length || "—";
+  $("s-vol").textContent    = usd(snap.totalVolume);
+  $("s-stable").textContent = snap.stablesExcluded ?? "—";
+  $("s-deriv").textContent  = snap.derivativesExcluded ?? "—";
+  $("s-tok").textContent    = snap.tokenizedExcluded ?? "—";
+  $("s-when").textContent   = snap.fetchedAt && (snap.assets || []).length ? ago(snap.fetchedAt) : "—";
+  $("s-src").textContent    = snap.source || "—";
+
+  $("banner").innerHTML = snap.error
+    ? `<div class="banner err"><b>Crawl error:</b> ${esc(snap.error)}</div>` : "";
+
+  document.querySelectorAll("th").forEach(th => {
+    th.classList.remove("num-asc", "num-desc");
+    if (th.dataset.k === sortKey) th.classList.add(sortDir === 1 ? "num-asc" : "num-desc");
+  });
+}
+
+function tickNext() {
+  if (!intervalSec || !nextRun) { $("s-next").textContent = "disabled"; return; }
+  let s = Math.max(0, Math.round((nextRun - Date.now()) / 1000));
+  const m = Math.floor(s / 60);
+  $("s-next").textContent = m > 0 ? `in ${m}m ${s % 60}s` : `in ${s}s`;
+  if (s === 0) { nextRun = Date.now() + intervalSec * 1000; load(); }
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/assets");
+    const fresh = await r.json();
+    // Scheduler may have refreshed server-side; re-anchor the countdown.
+    if (snap.fetchedAt && fresh.fetchedAt !== snap.fetchedAt) nextRun = Date.now() + intervalSec * 1000;
+    snap = fresh;
+    render();
+  } catch (e) { console.error(e); }
+}
+
+async function crawlAgain() {
+  if (busy) return;
+  busy = true;
+  const btn = $("refresh");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>Crawling…';
+  try {
+    const r = await fetch("/api/refresh", { method: "POST" });
+    snap = await r.json();
+    nextRun = Date.now() + intervalSec * 1000;
+    render();
+  } catch (e) {
+    $("banner").innerHTML = `<div class="banner err"><b>Request failed:</b> ${esc(e.message)}</div>`;
+  } finally {
+    busy = false;
+    btn.disabled = false;
+    btn.textContent = "Crawl again";
+  }
+}
+
+document.querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+  const k = th.dataset.k;
+  if (k === sortKey) sortDir = -sortDir;
+  else { sortKey = k; sortDir = (k === "name" || k === "circulatingSupply" || k === "rank") ? 1 : -1; }
+  render();
+}));
+$("refresh").addEventListener("click", crawlAgain);
+$("search").addEventListener("input", render);
+
+(async () => {
+  try {
+    const cfg = await (await fetch("/api/config")).json();
+    intervalSec = cfg.intervalSeconds || 0;
+    if (intervalSec) nextRun = Date.now() + intervalSec * 1000;
+  } catch (e) { console.error(e); }
+  await load();
+  // The first crawl starts at boot; poll briefly so the table fills itself in.
+  setInterval(load, 10000);
+  setInterval(tickNext, 1000);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+crypto-mc
+crypto-mc.exe
+*.exe
+*.log
+*.err
+.env
+.idea/
