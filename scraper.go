@@ -18,7 +18,7 @@ import (
 // (the rest are JS-filled skeletons), so this is the only way a non-JS crawler
 // can see the full set — and it carries CoinMarketCap's own "stablecoin" tag.
 const listingURL = "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listing" +
-	"?start=1&limit=%d&sortBy=volume_24h&sortType=desc&convert=USD&cryptoType=all&tagType=all"
+	"?start=%d&limit=%d&sortBy=volume_24h&sortType=desc&convert=USD&cryptoType=all&tagType=all"
 
 // pageURL is the page the user asked for, used as the fallback source.
 const pageURL = "https://coinmarketcap.com/all/views/all/"
@@ -84,6 +84,17 @@ func (s *Scraper) Scrape() Snapshot {
 
 // --- primary source: JSON listing -------------------------------------------
 
+// wantMore reports whether another listing page should be requested after a
+// page that returned `rows` rows and brought the kept total to `kept`. Only a
+// full page means more data may exist, and only a positive TopN target asks
+// for more than one page.
+func wantMore(kept, rows, topN, pageSize int) bool {
+	if topN <= 0 || rows == 0 || rows < pageSize {
+		return false
+	}
+	return kept < topN
+}
+
 type cmcListing struct {
 	Data struct {
 		List []struct {
@@ -111,14 +122,18 @@ type cmcListing struct {
 func (s *Scraper) scrapeListing() (Snapshot, error) {
 	snap := Snapshot{Source: "coinmarketcap listing api"}
 
-	// Ask for a generous window so we still have plenty left after filtering.
-	limit := s.TopN * 2
-	if limit < 200 {
-		limit = 200
+	// Ask for a generous window so a single page usually covers TopN even
+	// after stablecoin/derivative filtering.
+	pageSize := s.TopN * 2
+	if pageSize < 200 {
+		pageSize = 200
 	}
-	if limit > 1000 {
-		limit = 1000
+	if pageSize > 1000 {
+		pageSize = 1000
 	}
+	// TopN <= 0 means no target: fetch a single page.
+	target := max(s.TopN, 0)
+	const maxPages = 20 // safety net against a runaway loop
 
 	c := s.collector("api.coinmarketcap.com")
 	c.OnRequest(func(r *colly.Request) {
@@ -179,17 +194,29 @@ func (s *Scraper) scrapeListing() (Snapshot, error) {
 		reqErr = fmt.Errorf("status %d: %w", r.StatusCode, err)
 	})
 
-	if err := c.Visit(fmt.Sprintf(listingURL, limit)); err != nil {
-		return snap, err
-	}
-	c.Wait()
+	for page, start, prevRows := 0, 1, 0; ; page++ {
+		if err := c.Visit(fmt.Sprintf(listingURL, start, pageSize)); err != nil {
+			return snap, err
+		}
+		c.Wait()
 
-	switch {
-	case reqErr != nil:
-		return snap, reqErr
-	case parseErr != nil:
-		return snap, parseErr
-	case len(snap.Assets) == 0:
+		switch {
+		case reqErr != nil:
+			return snap, reqErr
+		case parseErr != nil:
+			return snap, parseErr
+		}
+
+		// Rows this page: a short page means the listing is exhausted.
+		rows := snap.RowsSeen - prevRows
+		prevRows = snap.RowsSeen
+		if page >= maxPages-1 || !wantMore(len(snap.Assets), rows, target, pageSize) {
+			break
+		}
+		start += pageSize
+	}
+
+	if len(snap.Assets) == 0 {
 		return snap, fmt.Errorf("listing returned no usable rows")
 	}
 	return snap, nil
@@ -329,9 +356,9 @@ func addThousands(s string) string {
 	return out
 }
 
-// parseMoney turns "$1.54T", "$50,764,798,921" or "$0.00001234" into a float.
+// parseMoney turns "$1.54T", "$50,764,798,921", "<$0.01" or "$0.00001234" into a float.
 func parseMoney(s string) float64 {
-	s = strings.NewReplacer("$", "", ",", "", " ", "").Replace(strings.TrimSpace(s))
+	s = strings.NewReplacer("$", "", ",", "", " ", "", "<", "").Replace(strings.TrimSpace(s))
 	if s == "" || s == "--" || s == "?" {
 		return 0
 	}

@@ -47,7 +47,7 @@ func main() {
 
 	stop := make(chan struct{})
 	if cfg.ScrapeOnStart {
-		go store.Refresh("startup")
+		store.Trigger("startup")
 	}
 	store.StartScheduler(cfg.Interval, stop)
 
@@ -83,7 +83,9 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	srv.Shutdown(ctx)
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("server: shutdown: %v", err)
+	}
 }
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +108,10 @@ func handleAssets(store *Store) http.HandlerFunc {
 	}
 }
 
-// handleRefresh triggers the crawler on demand (the "Crawl again" button).
+// handleRefresh asks the store to crawl again (the "Crawl again" button). It
+// returns 202 immediately with the current snapshot — the crawl runs in the
+// background and the UI polls /api/assets for the fresh data, so a slow crawl
+// can never outlive the HTTP response.
 func handleRefresh(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -114,11 +119,8 @@ func handleRefresh(store *Store) http.HandlerFunc {
 			http.Error(w, "use POST", http.StatusMethodNotAllowed)
 			return
 		}
-		snap, didWork := store.Refresh("manual")
-		if !didWork {
-			log.Printf("refresh: manual request joined an in-flight crawl")
-		}
-		writeJSON(w, http.StatusOK, snap)
+		store.Trigger("manual")
+		writeJSON(w, http.StatusAccepted, store.Snapshot())
 	}
 }
 
@@ -137,7 +139,9 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("http: write response: %v", err)
+	}
 }
 
 func envStr(key, def string) string {

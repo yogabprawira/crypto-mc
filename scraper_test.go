@@ -16,10 +16,32 @@ func TestParseMoney(t *testing.T) {
 		"--":              0,
 		"":                0,
 		"$4,600,000,000":  4.6e9,
+		"<$0.01":          0.01,
 	}
 	for in, want := range cases {
 		if got := parseMoney(in); got != want {
 			t.Errorf("parseMoney(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// wantMore decides whether another listing page should be fetched: only when
+// we still want more rows, the last page was full, and rows came back at all.
+func TestWantMorePages(t *testing.T) {
+	cases := []struct {
+		kept, rows, topN, pageSize int
+		want                       bool
+	}{
+		{50, 1000, 200, 1000, true},  // full page, not enough kept
+		{250, 1000, 200, 1000, false}, // enough kept
+		{50, 400, 200, 1000, false},   // short page: end of data
+		{50, 1000, 0, 1000, false},    // no target: single page
+		{0, 0, 200, 1000, false},      // empty page: end of data
+	}
+	for _, c := range cases {
+		if got := wantMore(c.kept, c.rows, c.topN, c.pageSize); got != c.want {
+			t.Errorf("wantMore(kept=%d rows=%d topN=%d pageSize=%d) = %t, want %t",
+				c.kept, c.rows, c.topN, c.pageSize, got, c.want)
 		}
 	}
 }
@@ -76,10 +98,13 @@ func TestIsStablecoin(t *testing.T) {
 	volatile := []Asset{
 		{Symbol: "BTC", Name: "Bitcoin", Price: 77000, Change24h: 0.1},
 		{Symbol: "UNI", Name: "Uniswap", Price: 6.2, Change24h: 3.1},
-		// USD in the name but nowhere near a peg — must not be excluded.
-		{Symbol: "USDX", Name: "Volatile USD Thing", Price: 42, Change24h: 9},
+		// USD in the name but nowhere near a peg — must not be excluded. The
+		// symbol is deliberately NOT in knownStables: curated-list symbols are
+		// excluded unconditionally (a depegged USDT is still a stablecoin), so
+		// only an unknown ticker can exercise the price-aware heuristic.
+		{Symbol: "VUSD", Name: "Volatile USD Thing", Price: 42, Change24h: 9},
 	}
-	for _, a := range volatile[:2] {
+	for _, a := range volatile {
 		if isStablecoin(a) {
 			t.Errorf("did not expect %s to be flagged as a stablecoin", a.Symbol)
 		}
