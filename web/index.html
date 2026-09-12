@@ -153,6 +153,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => (
 ));
 // Only allow the coinmarketcap links we expect; anything else loses its href.
 const safeURL = (u) => /^https:\/\/coinmarketcap\.com\//.test(u || "") ? esc(u) : "";
+// A snapshot has data only once a crawl landed (Go zero time serializes as 0001-…).
+const hasData = (s) => !!(s && s.fetchedAt && !s.fetchedAt.startsWith("0001-"));
 
 const ago = (iso) => {
   const s = Math.floor((Date.now() - new Date(iso)) / 1000);
@@ -166,8 +168,18 @@ function render() {
   let list = snap.assets || [];
   if (q) list = list.filter(a => a.name.toLowerCase().includes(q) || a.symbol.toLowerCase().includes(q));
 
+  // circulatingSupply is a display string ("20,071,518 BTC") — sort it by its
+  // numeric value, not lexically ("9,999" would otherwise outrank "10,000").
+  const sortVal = (a) => {
+    if (sortKey === "circulatingSupply") {
+      const n = parseFloat(String(a.circulatingSupply).replace(/[^0-9.]/g, ""));
+      return isNaN(n) ? 0 : n;
+    }
+    return a[sortKey];
+  };
+
   list = [...list].sort((a, b) => {
-    const x = a[sortKey], y = b[sortKey];
+    const x = sortVal(a), y = sortVal(b);
     if (typeof x === "string") return sortDir * x.localeCompare(y);
     return sortDir * (x - y);
   });
@@ -211,16 +223,22 @@ function tickNext() {
   let s = Math.max(0, Math.round((nextRun - Date.now()) / 1000));
   const m = Math.floor(s / 60);
   $("s-next").textContent = m > 0 ? `in ${m}m ${s % 60}s` : `in ${s}s`;
-  if (s === 0) { nextRun = Date.now() + intervalSec * 1000; load(); }
+  // Countdown hit zero: fetch fresh data (load() re-anchors nextRun from the
+  // server's fetchedAt); re-check in 5s if the crawl is still in flight.
+  if (s === 0) { nextRun = Date.now() + 5000; load(); }
 }
 
 async function load() {
   try {
     const r = await fetch("/api/assets");
+    if (!r.ok) throw new Error("HTTP " + r.status);
     const fresh = await r.json();
-    // Scheduler may have refreshed server-side; re-anchor the countdown.
-    if (snap.fetchedAt && fresh.fetchedAt !== snap.fetchedAt) nextRun = Date.now() + intervalSec * 1000;
     snap = fresh;
+    // Anchor the countdown to the server's actual crawl time, not the clock
+    // of whoever loaded the page: next crawl ≈ fetchedAt + duration + interval.
+    if (hasData(fresh) && intervalSec) {
+      nextRun = new Date(fresh.fetchedAt).getTime() + (fresh.durationMs || 0) + intervalSec * 1000;
+    }
     render();
   } catch (e) { console.error(e); }
 }
@@ -231,10 +249,29 @@ async function crawlAgain() {
   const btn = $("refresh");
   btn.disabled = true;
   btn.innerHTML = '<span class="spin"></span>Crawling…';
+  const since = hasData(snap) ? snap.fetchedAt : null;
   try {
     const r = await fetch("/api/refresh", { method: "POST" });
-    snap = await r.json();
-    nextRun = Date.now() + intervalSec * 1000;
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const res = await r.json();
+    if (hasData(res) && (!since || res.fetchedAt !== since)) {
+      // The POST joined a crawl that had just finished.
+      snap = res;
+    } else {
+      // 202 Accepted: the crawl runs in the background — poll for the new
+      // snapshot so a slow crawl can never outlive this request cycle.
+      const deadline = Date.now() + 120000;
+      while (Date.now() < deadline) {
+        await new Promise(res => setTimeout(res, 2000));
+        const r2 = await fetch("/api/assets");
+        if (!r2.ok) throw new Error("HTTP " + r2.status);
+        const fresh = await r2.json();
+        if (hasData(fresh) && fresh.fetchedAt !== since) { snap = fresh; break; }
+      }
+    }
+    if (hasData(snap) && intervalSec) {
+      nextRun = new Date(snap.fetchedAt).getTime() + (snap.durationMs || 0) + intervalSec * 1000;
+    }
     render();
   } catch (e) {
     $("banner").innerHTML = `<div class="banner err"><b>Request failed:</b> ${esc(e.message)}</div>`;

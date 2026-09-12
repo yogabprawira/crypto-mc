@@ -6,12 +6,17 @@ import (
 	"time"
 )
 
+// crawler is the scraping dependency; *Scraper satisfies it.
+type crawler interface {
+	Scrape() Snapshot
+}
+
 // Store holds the latest snapshot and guarantees that only one crawl runs at a
 // time, so the manual refresh button and the scheduler cannot stampede the
 // source. A refresh requested while one is in flight joins the running crawl
 // instead of starting a second one.
 type Store struct {
-	scraper *Scraper
+	scraper crawler
 
 	mu      sync.RWMutex
 	current Snapshot
@@ -21,7 +26,7 @@ type Store struct {
 	done    chan struct{}
 }
 
-func NewStore(s *Scraper) *Store {
+func NewStore(s crawler) *Store {
 	return &Store{scraper: s}
 }
 
@@ -50,11 +55,15 @@ func (st *Store) Refresh(trigger string) (Snapshot, bool) {
 	log.Printf("refresh: started (trigger=%s)", trigger)
 	snap := st.scraper.Scrape()
 
-	// Keep the previous good data visible if the crawl failed outright.
+	// Keep the previous good data visible if the crawl failed outright, but
+	// stamp the failed attempt's time/duration/error on it so the UI reflects
+	// that a crawl did run.
 	st.mu.Lock()
 	if snap.Error != "" && len(snap.Assets) == 0 && len(st.current.Assets) > 0 {
 		prev := st.current
 		prev.Error = snap.Error
+		prev.FetchedAt = snap.FetchedAt
+		prev.DurationMS = snap.DurationMS
 		st.current = prev
 	} else {
 		st.current = snap
@@ -70,6 +79,20 @@ func (st *Store) Refresh(trigger string) (Snapshot, bool) {
 	return result, true
 }
 
+// Trigger starts a crawl in the background without blocking the caller. If a
+// crawl is already in flight the request joins it; Store's single-flight
+// Refresh prevents any source stampede either way.
+func (st *Store) Trigger(trigger string) {
+	st.runMu.Lock()
+	if st.running {
+		st.runMu.Unlock()
+		log.Printf("refresh: %s joined an in-flight crawl", trigger)
+		return
+	}
+	st.runMu.Unlock()
+	go st.Refresh(trigger)
+}
+
 // StartScheduler kicks off periodic refreshes until stop is closed.
 func (st *Store) StartScheduler(interval time.Duration, stop <-chan struct{}) {
 	if interval <= 0 {
@@ -79,11 +102,12 @@ func (st *Store) StartScheduler(interval time.Duration, stop <-chan struct{}) {
 	log.Printf("scheduler: running every %s", interval)
 
 	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		// time.After is re-created after each Refresh completes, so the next
+		// crawl always starts a full interval after the previous one — no
+		// buffered-tick back-to-back crawls when interval < crawl duration.
 		for {
 			select {
-			case <-ticker.C:
+			case <-time.After(interval):
 				st.Refresh("scheduler")
 			case <-stop:
 				log.Printf("scheduler: stopped")
